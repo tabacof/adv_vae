@@ -23,13 +23,13 @@ import cPickle as cPkl
 filename_script = os.path.basename(os.path.realpath(__file__))
 
 #settings
-do_train_model = True
+do_train_model = False
 dataset = 'fixed'
 batch_size = 100
-nhidden = 400
+nhidden = 200
 nonlin_enc = T.nnet.softplus
 nonlin_dec = T.nnet.softplus
-latent_size = 50
+latent_size = 100
 analytic_kl_term = True
 lr = 0.0003
 num_epochs = 150
@@ -84,7 +84,6 @@ l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros(nfeatures, dtype = np.floa
 l_noise.params[l_noise.b].remove("trainable")
 l_enc_h1 = lasagne.layers.DenseLayer(l_noise, num_units=nhidden, nonlinearity=nonlin_enc, name='ENC_DENSE1')
 l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=nhidden, nonlinearity=nonlin_enc, name='ENC_DENSE2')
-l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=nhidden, nonlinearity=nonlin_enc, name='ENC_DENSE3')
 
 l_mu = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_MU')
 l_log_var = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_LOG_VAR')
@@ -95,9 +94,7 @@ l_z = SimpleSampleLayer(mean=l_mu, log_var=l_log_var)
 ### GENERATIVE MODEL p(x|z)
 l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE2')
 l_dec_h1 = lasagne.layers.DenseLayer(l_dec_h1, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE1')
-l_dec_h1 = lasagne.layers.DenseLayer(l_dec_h1, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE2')
 l_dec_x_mu = lasagne.layers.DenseLayer(l_dec_h1, num_units=nfeatures, nonlinearity=lasagne.nonlinearities.sigmoid, name='DEC_X_MU')
-
 
 # Get outputs from model
 # with noise
@@ -230,41 +227,80 @@ else:
     print "Load model data"
     read_model_data(l_dec_x_mu, "mnist_model")
         
-orig_img = 4
-adv_img = 6
+def kld(mean1, log_var1, mean2, log_var2):
+    mean_term = (T.exp(0.5*log_var1) + (mean1-mean2)**2.0)/T.exp(0.5*log_var2)
+    return mean_term + log_var2 - log_var1 - 0.5
 
-prediction = lasagne.layers.get_output(l_dec_x_mu, inputs = sym_x, deterministic=True)
-adv_target  = T.vector()
-lasagne.objectives.squared_error(prediction, adv_target)
-adv_confusion = lasagne.objectives.squared_error(prediction, adv_target).sum()
+# Original and target images
+orig_img = 13
+target_img = 1
+
+# Autoencoder outputs
+mean, log_var, reconstruction = lasagne.layers.get_output(
+    [l_mu, l_log_var, l_dec_x_mu], inputs = sym_x, deterministic=True)
+    
+# Adversarial confusion cost function
+    
+# Mean squared reconstruction difference
+#adv_target  = T.vector()
+#adv_confusion = lasagne.objectives.squared_error(reconstruction, adv_target).sum()
+# KL divergence between latent variables
+adv_mean =  T.vector()
+adv_log_var = T.vector()
+adv_confusion = kld(mean, log_var, adv_mean, adv_log_var).sum()
+
+# Adversarial regularization
 C = T.scalar()
 adv_reg = C*lasagne.regularization.l2(l_noise.b)
+# Total adversarial loss
 adv_loss = adv_confusion + adv_reg
 adv_grad = T.grad(adv_loss, l_noise.b)
-adv_function = theano.function([sym_x, adv_target, C], [adv_loss, adv_grad])
+#adv_function = theano.function([sym_x, adv_target, C], [adv_loss, adv_grad])
 
-l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, nfeatures).astype(np.float32))
-adv_plot = theano.function([sym_x], prediction)
+# Function used to optimize the adversarial noise
+adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv_grad])
 
+# Set the adversarial noise to zero
+l_noise.b.set_value(np.zeros(nfeatures).astype(np.float32))
+
+# Get latent variables of the target
+adv_mean_log_var = theano.function([sym_x], [mean, log_var])
+adv_mean_values, adv_log_var_values = adv_mean_log_var(train_x[target_img][np.newaxis, :])
+# Plot original reconstruction
+adv_plot = theano.function([sym_x], reconstruction)
 plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
 
+# Initialize the adversarial noise for the optimization procedure
+l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, nfeatures).astype(np.float32))
+
+# Optimization function for L-BFGS-B
 def fmin_func(x):
     l_noise.b.set_value(x.astype(np.float32))
-    f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[adv_img], 0)
+    #f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[target_img], 1.0)
+    f, g = adv_function(train_x[orig_img][np.newaxis,:], adv_mean_values.squeeze(), adv_log_var_values.squeeze(), 1.0)
     return float(f), g.astype(np.float64)
     
+# Noise bounds (pixels cannot exceed 0-1)
 bounds = zip(-train_x[orig_img], 1-train_x[orig_img])
+# L-BFGS-B optimization to find adversarial noise
 x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value(), fprime = None, bounds = bounds, factr = 10, m = 25)
 
+# Plotting results
 plt.imshow(train_x[orig_img].reshape(28,28), cmap='Greys_r')
+plt.title("Original image")
 plt.show()
-plt.imshow(train_x[adv_img].reshape(28,28), cmap='Greys_r')
-plt.show()
-plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
+plt.imshow(train_x[target_img].reshape(28,28), cmap='Greys_r')
+plt.title("Target image")
 plt.show()
 plt.imshow(x.reshape(28,28), cmap='Greys_r')
+plt.title("Adversarial noise")
 plt.show()
 plt.imshow((train_x[orig_img]+x).reshape(28,28), cmap='Greys_r')
+plt.title("Adversarial image")
+plt.show()
+plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
+plt.title("Reconstructed adversarial image")
 plt.show()
 
+# Adversarial noise norm
 print((x**2.0).sum())
