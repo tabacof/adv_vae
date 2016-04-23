@@ -24,13 +24,13 @@ filename_script = os.path.basename(os.path.realpath(__file__))
 #settings
 dataset = 'fixed'
 batch_size = 100
-nhidden = 200
+nhidden = 400
 nonlin_enc = T.nnet.softplus
 nonlin_dec = T.nnet.softplus
-latent_size = 100
+latent_size = 50
 analytic_kl_term = True
 lr = 0.0003
-num_epochs = 1000
+num_epochs = 150
 results_out = os.path.join("results", os.path.splitext(filename_script)[0])
 
 np.random.seed(1234) # reproducibility
@@ -59,7 +59,7 @@ if dataset is 'sample':
     preprocesses_dataset = bernoullisample
 else:
     print "Using fixed binarized MNIST data"
-    #train_x, valid_x, test_x = load_mnist_binarized()
+    train_x, valid_x, test_x = load_mnist_binarized()
     preprocesses_dataset = lambda dataset: dataset #just a dummy function
 
 #concatenate train and validation set
@@ -82,6 +82,7 @@ l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros(nfeatures, dtype = np.floa
 l_noise.params[l_noise.b].remove("trainable")
 l_enc_h1 = lasagne.layers.DenseLayer(l_noise, num_units=nhidden, nonlinearity=nonlin_enc, name='ENC_DENSE1')
 l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=nhidden, nonlinearity=nonlin_enc, name='ENC_DENSE2')
+l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=nhidden, nonlinearity=nonlin_enc, name='ENC_DENSE3')
 
 l_mu = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_MU')
 l_log_var = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_LOG_VAR')
@@ -92,6 +93,7 @@ l_z = SimpleSampleLayer(mean=l_mu, log_var=l_log_var)
 ### GENERATIVE MODEL p(x|z)
 l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE2')
 l_dec_h1 = lasagne.layers.DenseLayer(l_dec_h1, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE1')
+l_dec_h1 = lasagne.layers.DenseLayer(l_dec_h1, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE2')
 l_dec_x_mu = lasagne.layers.DenseLayer(l_dec_h1, num_units=nfeatures, nonlinearity=lasagne.nonlinearities.sigmoid, name='DEC_X_MU')
 
 
@@ -216,14 +218,14 @@ adv_loss = adv_confusion + adv_reg
 adv_grad = T.grad(adv_loss, l_noise.b)
 adv_function = theano.function([sym_x, adv_target, C], [adv_loss, adv_grad])
 
-l_noise.b.set_value(np.zeros(nfeatures).astype(np.float32))
+l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, nfeatures).astype(np.float32))
 adv_plot = theano.function([sym_x], prediction)
 
 plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
 
 def fmin_func(x):
     l_noise.b.set_value(x.astype(np.float32))
-    f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[adv_img], 4.0)
+    f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[adv_img], 0)
     return float(f), g.astype(np.float64)
     
 bounds = zip(-train_x[orig_img], 1-train_x[orig_img])
