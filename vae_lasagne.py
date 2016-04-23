@@ -18,10 +18,12 @@ from parmesan.datasets import load_mnist_realval, load_mnist_binarized
 import time, shutil, os
 import scipy
 import pylab as plt
+import cPickle as cPkl
 
 filename_script = os.path.basename(os.path.realpath(__file__))
 
 #settings
+do_train_model = True
 dataset = 'fixed'
 batch_size = 100
 nhidden = 200
@@ -59,7 +61,7 @@ if dataset is 'sample':
     preprocesses_dataset = bernoullisample
 else:
     print "Using fixed binarized MNIST data"
-    #train_x, valid_x, test_x = load_mnist_binarized()
+    train_x, valid_x, test_x = load_mnist_binarized()
     preprocesses_dataset = lambda dataset: dataset #just a dummy function
 
 #concatenate train and validation set
@@ -168,6 +170,23 @@ train_model = theano.function([sym_batch_index, sym_lr], LL_train, updates=updat
 test_model = theano.function([sym_batch_index], LL_eval,
                                   givens={sym_x: sh_x_test[batch_slice], },)
 
+PARAM_EXTENSION = 'params'
+
+def read_model_data(model, filename):
+    """Unpickles and loads parameters into a Lasagne model."""
+    filename = os.path.join('./', '%s.%s' % (filename, PARAM_EXTENSION))
+    with open(filename, 'r') as f:
+        data = cPkl.load(f)
+    lasagne.layers.set_all_param_values(model, data)
+
+
+def write_model_data(model, filename):
+    """Pickles the parameters within a Lasagne model."""
+    data = lasagne.layers.get_all_param_values(model)
+    filename = os.path.join('./', filename)
+    filename = '%s.%s' % (filename, PARAM_EXTENSION)
+    with open(filename, 'w') as f:
+        cPkl.dump(data, f)
 
 def train_epoch(lr):
     costs = []
@@ -184,24 +203,30 @@ def test_epoch():
         costs += [cost_batch]
     return np.mean(costs)
 
+if do_train_model:
+    # Training Loop
+    for epoch in range(num_epochs):
+        start = time.time()
 
-# Training Loop
-for epoch in range(num_epochs):
-    start = time.time()
+        #shuffle train data, train model and test model
+        np.random.shuffle(train_x)
+        sh_x_train.set_value(preprocesses_dataset(train_x))
 
-    #shuffle train data, train model and test model
-    np.random.shuffle(train_x)
-    sh_x_train.set_value(preprocesses_dataset(train_x))
+        train_cost = train_epoch(lr)
+        test_cost = test_epoch()
 
-    train_cost = train_epoch(lr)
-    test_cost = test_epoch()
+        t = time.time() - start
 
-    t = time.time() - start
-
-    line =  "*Epoch: %i\tTime: %0.2f\tLR: %0.5f\tLL Train: %0.3f\tLL test: %0.3f\t" % ( epoch, t, lr, train_cost, test_cost)
-    print line
-    with open(logfile,'a') as f:
-        f.write(line + "\n")
+        line =  "*Epoch: %i\tTime: %0.2f\tLR: %0.5f\tLL Train: %0.3f\tLL test: %0.3f\t" % ( epoch, t, lr, train_cost, test_cost)
+        print line
+        with open(logfile,'a') as f:
+            f.write(line + "\n")
+    
+    print "Write model data"
+    write_model_data(l_dec_x_mu, "mnist_model")
+else:
+    print "Load model data"
+    read_model_data(l_dec_x_mu, "mnist_model")
         
 orig_img = 4
 adv_img = 6
