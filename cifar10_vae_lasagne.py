@@ -26,7 +26,7 @@ filename_script = os.path.basename(os.path.realpath(__file__))
 do_train_model = True
 dataset = 'cifar'
 batch_size = 100
-nhidden = 200
+nhidden = 200*3*255
 nonlin_enc = T.nnet.softplus
 nonlin_dec = T.nnet.softplus
 latent_size = 100
@@ -72,7 +72,7 @@ elif dataset is 'cifar':
     test_x = test_x.reshape(test_x.shape[0],-1).astype(np.uint8)
     del train_y, test_y
     from sklearn.preprocessing import OneHotEncoder
-    enc = OneHotEncoder(n_values=256, dtype = np.uint8) #, sparse= False)
+    enc = OneHotEncoder(n_values=256, dtype = np.uint8, sparse= False)
     train_x = enc.fit_transform(train_x) # 786432 features (32*32*3*256)
     test_x = enc.fit_transform(test_x)
     preprocesses_dataset = lambda dataset: dataset #just a dummy function
