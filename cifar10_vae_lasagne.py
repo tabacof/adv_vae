@@ -18,7 +18,7 @@ from parmesan.datasets import load_mnist_realval, load_mnist_binarized, load_cif
 import time, shutil, os
 import scipy
 import pylab as plt
-import cPickle as cPkl
+from read_write_model import *
 
 filename_script = os.path.basename(os.path.realpath(__file__))
 
@@ -32,11 +32,10 @@ nonlin_dec = T.nnet.softplus
 latent_size = 100
 analytic_kl_term = True
 lr = 0.0003
-num_epochs = 150
+num_epochs = 200
 results_out = os.path.join("results", os.path.splitext(filename_script)[0])
 
 np.random.seed(1234) # reproducibility
-
 
 if dataset is 'fixed':
     model_filename = "mnist_model"
@@ -55,7 +54,6 @@ logfile = os.path.join(results_out, 'logfile.log')
 sym_x = T.matrix()
 sym_lr = T.scalar('lr')
 
-
 #Helper functions
 def bernoullisample(x):
     return np.random.binomial(1,x,size=x.shape).astype(theano.config.floatX)
@@ -69,11 +67,15 @@ if dataset is 'sample':
     preprocesses_dataset = bernoullisample
 elif dataset is 'cifar':
     print "Using CIFAR10 dataset"
-    train_x, train_y, test_x, test_y =  load_cifar10(normalize=True,dequantify=False)
-    train_x = train_x.reshape(train_x.shape[0],-1)  # reshape so RGB data is all in one dimension
-    test_x = test_x.reshape(test_x.shape[0],-1)
+    train_x, train_y, test_x, test_y = load_cifar10(normalize=False,dequantify=False)
+    train_x = train_x.reshape(train_x.shape[0],-1).astype(np.uint8)  # reshape so RGB data is all in one dimension
+    test_x = test_x.reshape(test_x.shape[0],-1).astype(np.uint8)
     del train_y, test_y
-    preprocesses_dataset = bernoullisample
+    from sklearn.preprocessing import OneHotEncoder
+    enc = OneHotEncoder(n_values=256, dtype = np.uint8) #, sparse= False)
+    train_x = enc.fit_transform(train_x) # 786432 features (32*32*3*256)
+    test_x = enc.fit_transform(test_x)
+    preprocesses_dataset = lambda dataset: dataset #just a dummy function
 else:
     print "Using fixed binarized MNIST data"
     train_x, valid_x, test_x = load_mnist_binarized()
@@ -110,7 +112,7 @@ l_z = SimpleSampleLayer(mean=l_mu, log_var=l_log_var)
 ### GENERATIVE MODEL p(x|z)
 l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE2')
 l_dec_h1 = lasagne.layers.DenseLayer(l_dec_h1, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE1')
-l_dec_x_mu = lasagne.layers.DenseLayer(l_dec_h1, num_units=nfeatures, nonlinearity=lasagne.nonlinearities.sigmoid, name='DEC_X_MU')
+l_dec_x_mu = lasagne.layers.DenseLayer(l_dec_h1, num_units=nfeatures, nonlinearity=lasagne.nonlinearities.softmax, name='DEC_X_MU')
 
 # Get outputs from model
 # with noise
@@ -140,7 +142,11 @@ def latent_gaussian_x_bernoulli(z, z_mu, z_log_var, x_mu, x, analytic_kl_term):
     """
     if analytic_kl_term:
         kl_term = kl_normal2_stdnormal(z_mu, z_log_var).sum(axis=1)
-        log_px_given_z = log_bernoulli(x, x_mu, eps=1e-6).sum(axis=1)
+        if dataset is not 'cifar':
+            log_px_given_z = log_bernoulli(x, x_mu, eps=1e-6).sum(axis=1)
+        else:
+            log_px_given_z = - lasagne.objectives.categorical_crossentropy(x_mu, x).sum()
+            #log_px_given_z = log_multinomial(x, x_mu, eps=1e-6).sum(axis=1)
         LL = T.mean(-kl_term + log_px_given_z)
     else:
         log_qz_given_x = log_normal2(z, z_mu, z_log_var).sum(axis=1)
@@ -185,24 +191,6 @@ train_model = theano.function([sym_batch_index, sym_lr], LL_train, updates=updat
 test_model = theano.function([sym_batch_index], LL_eval,
                                   givens={sym_x: sh_x_test[batch_slice], },)
 
-PARAM_EXTENSION = 'params'
-
-def read_model_data(model, filename):
-    """Unpickles and loads parameters into a Lasagne model."""
-    filename = os.path.join('./', '%s.%s' % (filename, PARAM_EXTENSION))
-    with open(filename, 'r') as f:
-        data = cPkl.load(f)
-    lasagne.layers.set_all_param_values(model, data)
-
-
-def write_model_data(model, filename):
-    """Pickles the parameters within a Lasagne model."""
-    data = lasagne.layers.get_all_param_values(model)
-    filename = os.path.join('./', filename)
-    filename = '%s.%s' % (filename, PARAM_EXTENSION)
-    with open(filename, 'w') as f:
-        cPkl.dump(data, f)
-
 def train_epoch(lr):
     costs = []
     for i in range(n_train_batches):
@@ -238,9 +226,9 @@ if do_train_model:
             f.write(line + "\n")
     
     print "Write model data"
-    write_model_data(l_dec_x_mu, model_filename)
+    write_model(l_dec_x_mu, model_filename)
 else:
-    read_model_data(l_dec_x_mu, model_filename)
+    read_model(l_dec_x_mu, model_filename)
     
     
 def kld(mean1, log_var1, mean2, log_var2):
@@ -285,8 +273,15 @@ adv_mean_values, adv_log_var_values = adv_mean_log_var(train_x[target_img][np.ne
 # Plot original reconstruction
 adv_plot = theano.function([sym_x], reconstruction)
 
+def from_categorical(y): # expects flattened image of shape (786432,)
+     n_integers = y.shape[0]/256
+     result = np.zeros(n_integers)
+     for i in range(0, n_integers):
+         result[i] = np.argmax(y[(256*i):(256*i+256)])
+     return result 
+     
 def show_cifar(img, title=""): # expects flattened image of shape (3072,) 
-    img = img.reshape(32,32,3)
+    img = from_categorical(img).reshape(32,32,3)
     plt.figure(figsize=(0.5,0.5))
     plt.title(title)
     plt.axis("off")
@@ -315,7 +310,7 @@ x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value(), fprime 
 
 # Plotting results
 
-if dataset is cifar:
+if dataset is 'cifar':
     show_cifar(train_x[orig_img], "Original image")
     show_cifar(train_x[target_img] , "Target image")
     show_cifar(x, "Adversarial noise")
@@ -340,3 +335,4 @@ else:
 
 # Adversarial noise norm
 print((x**2.0).sum())
+
