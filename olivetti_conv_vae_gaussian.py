@@ -52,6 +52,7 @@ valid_x = None
 
 print "Loading Olivetti db"
 
+
 #svhn_train = scipy.io.loadmat('train_32x32.mat')
 #svhn_test = scipy.io.loadmat('test_32x32.mat')
 train_aux = fetch_olivetti_faces()
