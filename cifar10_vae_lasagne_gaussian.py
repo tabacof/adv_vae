@@ -14,11 +14,10 @@ import numpy as np
 import lasagne
 from parmesan.distributions import log_normal2, kl_normal2_stdnormal
 from parmesan.layers import SimpleSampleLayer
-from parmesan.datasets import load_cifar10
 import time, shutil, os
 import scipy
 import pylab as plt
-from read_write_model import *
+from read_write_model import read_model, write_model
 
 filename_script = os.path.basename(os.path.realpath(__file__))
 
@@ -28,14 +27,15 @@ batch_size = 100
 nhidden = 500
 nonlin_enc = T.nnet.softplus
 nonlin_dec = T.nnet.softplus
-latent_size = 100
+latent_size = 32*32*3
 analytic_kl_term = True
 lr = 0.0003
 num_epochs = 200
+model_filename = "svhn_conv_vae"
+
 results_out = os.path.join("results", os.path.splitext(filename_script)[0])
 
 np.random.seed(1234) # reproducibility
-model_filename = "cifar_model_gaussian"
 
 # Setup outputfolder logfile etc.
 if not os.path.exists(results_out):
@@ -48,25 +48,21 @@ sym_x = T.matrix()
 sym_x_out = T.matrix()
 sym_lr = T.scalar('lr')
 
-#Helper functions
-def bernoullisample(x):
-    return np.random.binomial(1,x,size=x.shape).astype(theano.config.floatX)
-
 valid_x = None
 ### LOAD DATA
 
-print "Using CIFAR10 dataset"
-train_x, train_y, test_x, test_y = load_cifar10(normalize=False,dequantify=False)
-train_x = train_x.reshape(train_x.shape[0],-1)  # reshape so RGB data is all in one dimension
-test_x = test_x.reshape(test_x.shape[0],-1)
-cifar_mean = 120.7076 # Calculated using training set
-cifar_std = 64.150093 # Calculated using training set
-train_x = (train_x - cifar_mean)/cifar_std
-test_x = (test_x - cifar_mean)/cifar_std
-del train_y, test_y
+print "Using SVHN dataset"
 
-train_x = train_x.astype(theano.config.floatX)
-test_x = test_x.astype(theano.config.floatX)
+svhn_train = scipy.io.loadmat('train_32x32.mat')
+svhn_test = scipy.io.loadmat('test_32x32.mat')
+
+svhn_mean = 115.11177966923525
+svhn_std = 50.819267906232888
+train_x = (svhn_train['X'] - svhn_mean)/svhn_std
+test_x = (svhn_test['X'] - svhn_mean)/svhn_std
+
+train_x = np.rollaxis(train_x, 3).transpose(0,1,3,2).astype(theano.config.floatX)
+test_x = np.rollaxis(test_x, 3).transpose(0,1,3,2).astype(theano.config.floatX)
 
 nfeatures=train_x.shape[1]
 n_train_batches = train_x.shape[0] / batch_size
@@ -77,11 +73,13 @@ sh_x_train = theano.shared(train_x, borrow=True)
 sh_x_test = theano.shared(test_x, borrow=True)
 
 ### RECOGNITION MODEL q(z|x)
-l_in = lasagne.layers.InputLayer((batch_size, nfeatures))
-l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros(nfeatures, dtype = np.float32), name = "NOISE")
-l_noise.params[l_noise.b].remove("trainable")
-l_enc_h1 = lasagne.layers.DenseLayer(l_noise, num_units=nhidden, nonlinearity=nonlin_enc, name='ENC_DENSE1')
-l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=nhidden, nonlinearity=nonlin_enc, name='ENC_DENSE2')
+l_in = lasagne.layers.InputLayer((batch_size, 3, 32, 32))
+#l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros(nfeatures, dtype = np.float32), name = "NOISE")
+#l_noise.params[l_noise.b].remove("trainable")
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_in, num_filters = 32, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 64, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
+l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=nhidden, nonlinearity=lasagne.nonlinearities.elu, name='ENC_DENSE2')
 
 l_mu = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_MU')
 l_log_var = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_LOG_VAR')
@@ -90,7 +88,12 @@ l_log_var = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinear
 l_z = SimpleSampleLayer(mean=l_mu, log_var=l_log_var)
 
 ### GENERATIVE MODEL p(x|z)
-l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE2')
+l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=nhidden, nonlinearity=lasagne.nonlinearities.elu, name='DEC_DENSE2')
+l_dec_h1 = lasagne.layers.ReshapeLayer(l_dec_h1, (-1, 4,4))
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 128, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 64, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 32, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
+
 l_dec_h1 = lasagne.layers.DenseLayer(l_dec_h1, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE1')
 l_dec_x_mu = lasagne.layers.DenseLayer(l_dec_h1, num_units=nfeatures, nonlinearity=nonlin_dec, name='DEC_X_MU')
 l_dec_x_log_var = lasagne.layers.DenseLayer(l_dec_h1, num_units=nfeatures, nonlinearity=nonlin_dec, name='DEC_X_LOG_VAR')
