@@ -226,14 +226,11 @@ if do_train_model:
 else:
     print "Load model data"
     read_model_data(l_dec_x_mu, "mnist_model")
-        
+       
+# Adversarial image generation for VAEs
 def kld(mean1, log_var1, mean2, log_var2):
     mean_term = (T.exp(0.5*log_var1) + (mean1-mean2)**2.0)/T.exp(0.5*log_var2)
     return mean_term + log_var2 - log_var1 - 0.5
-
-# Original and target images
-orig_img = 13
-target_img = 1
 
 # Autoencoder outputs
 mean, log_var, reconstruction = lasagne.layers.get_output(
@@ -260,47 +257,51 @@ adv_grad = T.grad(adv_loss, l_noise.b)
 # Function used to optimize the adversarial noise
 adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv_grad])
 
-# Set the adversarial noise to zero
-l_noise.b.set_value(np.zeros(nfeatures).astype(np.float32))
-
-# Get latent variables of the target
-adv_mean_log_var = theano.function([sym_x], [mean, log_var])
-adv_mean_values, adv_log_var_values = adv_mean_log_var(train_x[target_img][np.newaxis, :])
-# Plot original reconstruction
-adv_plot = theano.function([sym_x], reconstruction)
-plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
-
-# Initialize the adversarial noise for the optimization procedure
-l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, nfeatures).astype(np.float32))
-
-# Optimization function for L-BFGS-B
-def fmin_func(x):
-    l_noise.b.set_value(x.astype(np.float32))
-    #f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[target_img], 1.0)
-    f, g = adv_function(train_x[orig_img][np.newaxis,:], adv_mean_values.squeeze(), adv_log_var_values.squeeze(), 1.0)
-    return float(f), g.astype(np.float64)
+def adv_test(orig_img = 0, target_img = 1):
+    # Set the adversarial noise to zero
+    l_noise.b.set_value(np.zeros(nfeatures).astype(np.float32))
     
-# Noise bounds (pixels cannot exceed 0-1)
-bounds = zip(-train_x[orig_img], 1-train_x[orig_img])
-# L-BFGS-B optimization to find adversarial noise
-x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value(), fprime = None, bounds = bounds, factr = 10, m = 25)
-
-# Plotting results
-plt.imshow(train_x[orig_img].reshape(28,28), cmap='Greys_r')
-plt.title("Original image")
-plt.show()
-plt.imshow(train_x[target_img].reshape(28,28), cmap='Greys_r')
-plt.title("Target image")
-plt.show()
-plt.imshow(x.reshape(28,28), cmap='Greys_r')
-plt.title("Adversarial noise")
-plt.show()
-plt.imshow((train_x[orig_img]+x).reshape(28,28), cmap='Greys_r')
-plt.title("Adversarial image")
-plt.show()
-plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
-plt.title("Reconstructed adversarial image")
-plt.show()
-
-# Adversarial noise norm
-print((x**2.0).sum())
+    # Get latent variables of the target
+    adv_mean_log_var = theano.function([sym_x], [mean, log_var])
+    adv_mean_values, adv_log_var_values = adv_mean_log_var(train_x[target_img][np.newaxis, :])
+    
+    # Plot original image and its reconstruction
+    adv_plot = theano.function([sym_x], reconstruction)
+    plt.imshow(train_x[orig_img].reshape(28,28), cmap='Greys_r')
+    plt.title("Original image")
+    plt.show() 
+    plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
+    plt.title("Reconstructed image")
+    plt.show()
+    
+    # Initialize the adversarial noise for the optimization procedure
+    l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, nfeatures).astype(np.float32))
+    
+    # Optimization function for L-BFGS-B
+    def fmin_func(x):
+        l_noise.b.set_value(x.astype(np.float32))
+        #f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[target_img], 1.0)
+        f, g = adv_function(train_x[orig_img][np.newaxis,:], adv_mean_values.squeeze(), adv_log_var_values.squeeze(), 1.0)
+        return float(f), g.astype(np.float64)
+        
+    # Noise bounds (pixels cannot exceed 0-1)
+    bounds = zip(-train_x[orig_img], 1-train_x[orig_img])
+    # L-BFGS-B optimization to find adversarial noise
+    x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value(), fprime = None, bounds = bounds, factr = 10, m = 25)
+    
+    # Plotting results
+    plt.imshow(x.reshape(28,28), cmap='Greys_r')
+    plt.title("Adversarial noise")
+    plt.show()
+    plt.imshow((train_x[orig_img]+x).reshape(28,28), cmap='Greys_r')
+    plt.title("Adversarial image")
+    plt.show()
+    plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
+    plt.title("Reconstructed adversarial image")
+    plt.show()
+    plt.imshow(train_x[target_img].reshape(28,28), cmap='Greys_r')
+    plt.title("Target image")
+    plt.show()
+    
+    # Adversarial noise norm
+    print("Adversarial distortion norm", (x**2.0).sum())

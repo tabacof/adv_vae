@@ -24,7 +24,6 @@ filename_script = os.path.basename(os.path.realpath(__file__))
 #settings
 do_train_model = True
 batch_size = 100
-nhidden = 500
 nonlin_enc = T.nnet.softplus
 nonlin_dec = T.nnet.softplus
 latent_size = 32*32*3
@@ -44,8 +43,7 @@ shutil.copy(os.path.realpath(__file__), os.path.join(results_out, filename_scrip
 logfile = os.path.join(results_out, 'logfile.log')
 
 #SYMBOLIC VARS
-sym_x = T.matrix()
-sym_x_out = T.matrix()
+sym_x = T.tensor4()
 sym_lr = T.scalar('lr')
 
 valid_x = None
@@ -61,10 +59,9 @@ svhn_std = 50.819267906232888
 train_x = (svhn_train['X'] - svhn_mean)/svhn_std
 test_x = (svhn_test['X'] - svhn_mean)/svhn_std
 
-train_x = np.rollaxis(train_x, 3).transpose(0,1,3,2).astype(theano.config.floatX)
-test_x = np.rollaxis(test_x, 3).transpose(0,1,3,2).astype(theano.config.floatX)
+train_x = np.rollaxis(train_x, 3).transpose(0,3,1,2).astype(theano.config.floatX)
+test_x = np.rollaxis(test_x, 3).transpose(0,3,1,2).astype(theano.config.floatX)
 
-nfeatures=train_x.shape[1]
 n_train_batches = train_x.shape[0] / batch_size
 n_test_batches = test_x.shape[0] / batch_size
 
@@ -79,7 +76,7 @@ l_in = lasagne.layers.InputLayer((batch_size, 3, 32, 32))
 l_enc_h1 = lasagne.layers.Conv2DLayer(l_in, num_filters = 32, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
 l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 64, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
 l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
-l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=nhidden, nonlinearity=lasagne.nonlinearities.elu, name='ENC_DENSE2')
+l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=512, nonlinearity=lasagne.nonlinearities.elu, name='ENC_DENSE2')
 
 l_mu = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_MU')
 l_log_var = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_LOG_VAR')
@@ -88,15 +85,15 @@ l_log_var = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinear
 l_z = SimpleSampleLayer(mean=l_mu, log_var=l_log_var)
 
 ### GENERATIVE MODEL p(x|z)
-l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=nhidden, nonlinearity=lasagne.nonlinearities.elu, name='DEC_DENSE2')
-l_dec_h1 = lasagne.layers.ReshapeLayer(l_dec_h1, (-1, 4,4))
-l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 128, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
-l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 64, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
-l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 32, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
-
-l_dec_h1 = lasagne.layers.DenseLayer(l_dec_h1, num_units=nhidden, nonlinearity=nonlin_dec, name='DEC_DENSE1')
-l_dec_x_mu = lasagne.layers.DenseLayer(l_dec_h1, num_units=nfeatures, nonlinearity=nonlin_dec, name='DEC_X_MU')
-l_dec_x_log_var = lasagne.layers.DenseLayer(l_dec_h1, num_units=nfeatures, nonlinearity=nonlin_dec, name='DEC_X_LOG_VAR')
+l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=512, nonlinearity=lasagne.nonlinearities.elu, name='DEC_DENSE1')
+l_dec_h1 = lasagne.layers.ReshapeLayer(l_dec_h1, (batch_size, -1, 4, 4))
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 128, crop="same",filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV1')
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 64, crop="same",filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV2')
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 32, filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV3')
+l_dec_x_mu = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 3,filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_MU')
+l_dec_x_mu = lasagne.layers.ReshapeLayer(l_dec_x_mu, (batch_size, -1))
+l_dec_x_log_var = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 3,filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_LOG_VAR')
+l_dec_x_log_var = lasagne.layers.ReshapeLayer(l_dec_x_log_var, (batch_size, -1))
 
 # Get outputs from model
 # with noise
@@ -125,7 +122,7 @@ def latent_gaussian_x_bernoulli(z, z_mu, z_log_var, x_mu, x_log_var, x):
     x: (batch_size, num_features)
     """
     kl_term = kl_normal2_stdnormal(z_mu, z_log_var).sum(axis=1)
-    log_px_given_z = log_normal2(x, x_mu, x_log_var).sum()
+    log_px_given_z = log_normal2(x.reshape((batch_size, -1)), x_mu, x_log_var).sum()
     LL = T.mean(-kl_term + log_px_given_z)
 
     return LL
@@ -249,8 +246,8 @@ adv_plot = theano.function([sym_x], reconstruction)
 
 def show_cifar(img, title=""): # expects flattened image of shape (3072,) 
     img = img.reshape(32,32,3)
-    img *= cifar_std
-    img += cifar_mean
+    img *= svhn_std
+    img += svhn_mean
     plt.figure(figsize=(0.5,0.5))
     plt.title(title)
     plt.axis("off")
