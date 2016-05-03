@@ -239,8 +239,6 @@ mean, log_var, reconstruction = lasagne.layers.get_output(
 # Adversarial confusion cost function
     
 # Mean squared reconstruction difference
-#adv_target  = T.vector()
-#adv_confusion = lasagne.objectives.squared_error(reconstruction, adv_target).sum()
 # KL divergence between latent variables
 adv_mean =  T.vector()
 adv_log_var = T.vector()
@@ -252,10 +250,12 @@ adv_reg = C*lasagne.regularization.l2(l_noise.b)
 # Total adversarial loss
 adv_loss = adv_confusion + adv_reg
 adv_grad = T.grad(adv_loss, l_noise.b)
-#adv_function = theano.function([sym_x, adv_target, C], [adv_loss, adv_grad])
 
 # Function used to optimize the adversarial noise
 adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv_grad])
+
+# Helper to plot reconstructions    
+adv_plot = theano.function([sym_x], reconstruction)
 
 def adv_test(orig_img = 0, target_img = 1):
     # Set the adversarial noise to zero
@@ -266,7 +266,6 @@ def adv_test(orig_img = 0, target_img = 1):
     adv_mean_values, adv_log_var_values = adv_mean_log_var(train_x[target_img][np.newaxis, :])
     
     # Plot original image and its reconstruction
-    adv_plot = theano.function([sym_x], reconstruction)
     plt.imshow(train_x[orig_img].reshape(28,28), cmap='Greys_r')
     plt.title("Original image")
     plt.show() 
@@ -305,3 +304,5 @@ def adv_test(orig_img = 0, target_img = 1):
     
     # Adversarial noise norm
     print("Adversarial distortion norm", (x**2.0).sum())
+
+adv_test()

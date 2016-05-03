@@ -25,12 +25,12 @@ from read_write_model import read_model, write_model
 filename_script = os.path.basename(os.path.realpath(__file__))
 
 #settings
-do_train_model = True
+do_train_model = False
 batch_size = 100
 latent_size = 100
 analytic_kl_term = True
 lr = 0.0002
-num_epochs = 15
+num_epochs = 25
 model_filename = "svhn_conv_vae"
 nplots = 15
 
@@ -71,9 +71,9 @@ sh_x_test = theano.shared(test_x, borrow=True)
 
 ### RECOGNITION MODEL q(z|x)
 l_in = lasagne.layers.InputLayer((batch_size, 3, 32, 32))
-#l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros(nfeatures, dtype = np.float32), name = "NOISE")
-#l_noise.params[l_noise.b].remove("trainable")
-l_enc_h1 = lasagne.layers.Conv2DLayer(l_in, num_filters = 32, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
+l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros((3,32,32), dtype = np.float32), shared_axes = 0, name = "NOISE")
+l_noise.params[l_noise.b].remove("trainable")
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_noise, num_filters = 32, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
 l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 64, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
 l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
 l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=512, nonlinearity=lasagne.nonlinearities.elu, name='ENC_DENSE2')
@@ -218,10 +218,6 @@ def kld(mean1, log_var1, mean2, log_var2):
     mean_term = (T.exp(0.5*log_var1) + (mean1-mean2)**2.0)/T.exp(0.5*log_var2)
     return mean_term + log_var2 - log_var1 - 0.5
 
-# Original and target images
-orig_img = 13
-target_img = 1
-
 # Autoencoder outputs
 mean, log_var, reconstruction = lasagne.layers.get_output(
     [l_mu, l_log_var, l_dec_x_mu], inputs = sym_x, deterministic=True)
@@ -247,50 +243,57 @@ adv_grad = T.grad(adv_loss, l_noise.b)
 # Function used to optimize the adversarial noise
 adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv_grad])
 
-# Set the adversarial noise to zero
-l_noise.b.set_value(np.zeros(nfeatures).astype(np.float32))
-
-# Get latent variables of the target
-adv_mean_log_var = theano.function([sym_x], [mean, log_var])
-adv_mean_values, adv_log_var_values = adv_mean_log_var(train_x[target_img][np.newaxis, :])
-# Plot original reconstruction
+# Helper to plot reconstructions    
 adv_plot = theano.function([sym_x], reconstruction)
 
-def show_cifar(img, title=""): # expects flattened image of shape (3072,) 
-    img = img.reshape(32,32,3)
+def show_svhn(img, title=""): # expects flattened image of shape (3072,) 
+    img = img.reshape(3,32,32).transpose(1,2,0)
     img *= svhn_std
     img += svhn_mean
-    plt.figure(figsize=(0.5,0.5))
+    img /= 255.0
+    plt.figure(figsize=(2,2))
     plt.title(title)
     plt.axis("off")
     plt.imshow(img)
     plt.show()
 
-show_cifar(train_x[orig_img])
-show_cifar(adv_plot(train_x[orig_img][np.newaxis, :]))
-
-# Initialize the adversarial noise for the optimization procedure
-l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, nfeatures).astype(np.float32))
-
-# Optimization function for L-BFGS-B
-def fmin_func(x):
-    l_noise.b.set_value(x.astype(np.float32))
-    #f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[target_img], 1.0)
-    f, g = adv_function(train_x[orig_img][np.newaxis,:], adv_mean_values.squeeze(), adv_log_var_values.squeeze(), 1.0)
-    return float(f), g.astype(np.float64)
+def adv_test(orig_img = 0, target_img = 1):
+    # Set the adversarial noise to zero
+    l_noise.b.set_value(np.zeros((3,32,32)).astype(np.float32))
     
-# Noise bounds (pixels cannot exceed 0-1)
-bounds = zip(-train_x[orig_img], 1-train_x[orig_img])
-# L-BFGS-B optimization to find adversarial noise
-x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value(), fprime = None, bounds = bounds, factr = 10, m = 25)
+    # Get latent variables of the target
+    adv_mean_log_var = theano.function([sym_x], [mean, log_var])
+    adv_mean_values, adv_log_var_values = adv_mean_log_var(np.tile(train_x[target_img],batch_size).reshape(batch_size, 3, 32, 32))
+    adv_mean_values = adv_mean_values[0]
+    adv_log_var_values = adv_log_var_values[0]
 
-# Plotting results
-show_cifar(train_x[orig_img], "Original image")
-show_cifar(train_x[target_img] , "Target image")
-show_cifar(x, "Adversarial noise")
-show_cifar((train_x[orig_img]+x), "Adversarial image")
-show_cifar(adv_plot(train_x[orig_img][np.newaxis, :]), "Reconstructed adversarial image")
+    # Plot original reconstruction    
+    show_svhn(test_x[orig_img], "Original image")
+    show_svhn(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))[0], "Original reconstruction")
 
-# Adversarial noise norm
-print((x**2.0).sum())
+    # Initialize the adversarial noise for the optimization procedure
+    l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, size=(3,32,32)).astype(np.float32))
+    
+    # Optimization function for L-BFGS-B
+    def fmin_func(x):
+        l_noise.b.set_value(x.reshape(3, 32, 32).astype(np.float32))
+        #f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[target_img], 1.0)
+        f, g = adv_function(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32), adv_mean_values, adv_log_var_values, 1.0)
+        return float(f), g.flatten().astype(np.float64)
+        
+    # Noise bounds (pixels cannot exceed 0-1)
+    #bounds = zip(-train_x[orig_img].flatten(), 1-train_x[orig_img].flatten())
+    
+    # L-BFGS-B optimization to find adversarial noise
+    x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value().flatten(), fprime = None, factr = 10, m = 25)
+    
+    # Plotting results
+    show_svhn(x, "Adversarial noise")
+    show_svhn((test_x[orig_img].flatten()+x), "Adversarial image")
+    show_svhn(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))[0], "Reconstructed adversarial image")
+    show_svhn(test_x[target_img] , "Target image")
 
+    # Adversarial noise norm
+    print("Adversarial distortion norm", (x**2.0).sum())
+    
+adv_test()
