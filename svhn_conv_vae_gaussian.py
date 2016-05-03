@@ -16,6 +16,9 @@ from parmesan.distributions import log_normal2, kl_normal2_stdnormal
 from parmesan.layers import SimpleSampleLayer
 import time, shutil, os
 import scipy
+from scipy.io import loadmat
+import matplotlib
+matplotlib.use('Agg')
 import pylab as plt
 from read_write_model import read_model, write_model
 
@@ -24,13 +27,12 @@ filename_script = os.path.basename(os.path.realpath(__file__))
 #settings
 do_train_model = True
 batch_size = 100
-nonlin_enc = T.nnet.softplus
-nonlin_dec = T.nnet.softplus
-latent_size = 32*32*3
+latent_size = 100
 analytic_kl_term = True
-lr = 0.0003
-num_epochs = 200
+lr = 0.0002
+num_epochs = 15
 model_filename = "svhn_conv_vae"
+nplots = 15
 
 results_out = os.path.join("results", os.path.splitext(filename_script)[0])
 
@@ -46,21 +48,19 @@ logfile = os.path.join(results_out, 'logfile.log')
 sym_x = T.tensor4()
 sym_lr = T.scalar('lr')
 
-valid_x = None
 ### LOAD DATA
-
 print "Using SVHN dataset"
 
-svhn_train = scipy.io.loadmat('train_32x32.mat')
-svhn_test = scipy.io.loadmat('test_32x32.mat')
+svhn_train = loadmat('train_32x32.mat')
+svhn_test = loadmat('test_32x32.mat')
+
+train_x = np.rollaxis(svhn_train['X'], 3).transpose(0,3,1,2).astype(theano.config.floatX)
+test_x = np.rollaxis(svhn_test['X'], 3).transpose(0,3,1,2).astype(theano.config.floatX)
 
 svhn_mean = 115.11177966923525
 svhn_std = 50.819267906232888
-train_x = (svhn_train['X'] - svhn_mean)/svhn_std
-test_x = (svhn_test['X'] - svhn_mean)/svhn_std
-
-train_x = np.rollaxis(train_x, 3).transpose(0,3,1,2).astype(theano.config.floatX)
-test_x = np.rollaxis(test_x, 3).transpose(0,3,1,2).astype(theano.config.floatX)
+train_x = (train_x - svhn_mean)/svhn_std
+test_x = (test_x - svhn_mean)/svhn_std
 
 n_train_batches = train_x.shape[0] / batch_size
 n_test_batches = test_x.shape[0] / batch_size
@@ -73,9 +73,9 @@ sh_x_test = theano.shared(test_x, borrow=True)
 l_in = lasagne.layers.InputLayer((batch_size, 3, 32, 32))
 #l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros(nfeatures, dtype = np.float32), name = "NOISE")
 #l_noise.params[l_noise.b].remove("trainable")
-l_enc_h1 = lasagne.layers.Conv2DLayer(l_in, num_filters = 32, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
-l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 64, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
-l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_in, num_filters = 32, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 64, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
 l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=512, nonlinearity=lasagne.nonlinearities.elu, name='ENC_DENSE2')
 
 l_mu = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_MU')
@@ -90,9 +90,9 @@ l_dec_h1 = lasagne.layers.ReshapeLayer(l_dec_h1, (batch_size, -1, 4, 4))
 l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 128, crop="same",filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV1')
 l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 64, crop="same",filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV2')
 l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 32, filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV3')
-l_dec_x_mu = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 3,filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_MU')
+l_dec_x_mu = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 3,filter_size = 4, nonlinearity = lasagne.nonlinearities.identity, name = 'DEC_MU')
 l_dec_x_mu = lasagne.layers.ReshapeLayer(l_dec_x_mu, (batch_size, -1))
-l_dec_x_log_var = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 3,filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_LOG_VAR')
+l_dec_x_log_var = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 3,filter_size = 4, nonlinearity = lasagne.nonlinearities.identity, name = 'DEC_LOG_VAR')
 l_dec_x_log_var = lasagne.layers.ReshapeLayer(l_dec_x_log_var, (batch_size, -1))
 
 # Get outputs from model
@@ -108,7 +108,7 @@ z_eval, z_mu_eval, z_log_var_eval, x_mu_eval, x_log_var_eval = lasagne.layers.ge
 
 
 #Calculate the loglikelihood(x) = E_q[ log p(x|z) + log p(z) - log q(z|x)]
-def latent_gaussian_x_bernoulli(z, z_mu, z_log_var, x_mu, x_log_var, x):
+def ELBO(z, z_mu, z_log_var, x_mu, x_log_var, x):
     """
     Latent z       : gaussian with standard normal prior
     decoder output : bernoulli
@@ -122,18 +122,16 @@ def latent_gaussian_x_bernoulli(z, z_mu, z_log_var, x_mu, x_log_var, x):
     x: (batch_size, num_features)
     """
     kl_term = kl_normal2_stdnormal(z_mu, z_log_var).sum(axis=1)
-    log_px_given_z = log_normal2(x.reshape((batch_size, -1)), x_mu, x_log_var).sum()
+    log_px_given_z = log_normal2(x.reshape((batch_size, -1)), x_mu, x_log_var).sum(axis=1)
     LL = T.mean(-kl_term + log_px_given_z)
 
     return LL
 
 # TRAINING LogLikelihood
-LL_train = latent_gaussian_x_bernoulli(
-    z_train, z_mu_train, z_log_var_train, x_mu_train, x_log_var_train, sym_x)
+LL_train = ELBO(z_train, z_mu_train, z_log_var_train, x_mu_train, x_log_var_train, sym_x)
 
 # EVAL LogLikelihood
-LL_eval = latent_gaussian_x_bernoulli(
-    z_eval, z_mu_eval, z_log_var_eval, x_mu_eval, x_log_var_eval, sym_x)
+LL_eval = ELBO(z_eval, z_mu_eval, z_log_var_eval, x_mu_eval, x_log_var_eval, sym_x)
 
 
 params = lasagne.layers.get_all_params([l_dec_x_mu, l_dec_x_log_var], trainable=True)
@@ -163,6 +161,9 @@ train_model = theano.function([sym_batch_index, sym_lr], LL_train, updates=updat
 test_model = theano.function([sym_batch_index], LL_eval,
                                   givens={sym_x: sh_x_test[batch_slice]},)
 
+plot_results = theano.function([sym_batch_index], x_mu_eval,
+                                  givens={sym_x: sh_x_test[batch_slice]},)
+
 def train_epoch(lr):
     costs = []
     for i in range(n_train_batches):
@@ -186,7 +187,18 @@ if do_train_model:
         #shuffle train data, train model and test model
         np.random.shuffle(train_x)
         sh_x_train.set_value(train_x)
-
+        
+        results = plot_results(0)
+        plt.figure(figsize=(2, nplots))
+        for i in range(0,nplots):
+            plt.subplot(nplots,2,(i+1)*2-1)
+            plt.imshow((svhn_std*test_x[i].transpose(1,2,0)+svhn_mean)/255.0)
+            plt.axis('off')
+            plt.subplot(nplots,2,(i+1)*2)
+            plt.imshow((svhn_std*results[i].reshape(3,32,32).transpose(1,2,0)+svhn_mean)/255.0)
+            plt.axis('off')
+        plt.savefig(results_out+"/epoch_"+str(epoch)+".pdf", bbox_inches='tight')
+            
         train_cost = train_epoch(lr)
         test_cost = test_epoch()
 
@@ -198,9 +210,9 @@ if do_train_model:
             f.write(line + "\n")
     
     print "Write model data"
-    write_model(l_dec_x_mu, model_filename)
+    write_model([l_dec_x_mu, l_dec_x_log_var], model_filename)
 else:
-    read_model(l_dec_x_mu, model_filename)
+    read_model([l_dec_x_mu, l_dec_x_log_var], model_filename)
     
 def kld(mean1, log_var1, mean2, log_var2):
     mean_term = (T.exp(0.5*log_var1) + (mean1-mean2)**2.0)/T.exp(0.5*log_var2)
