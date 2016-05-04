@@ -246,52 +246,53 @@ adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv
 # Helper to plot reconstructions    
 adv_plot = theano.function([sym_x], reconstruction)
 
-def show_svhn(img, title=""): # expects flattened image of shape (3072,) 
-    img = img.reshape(3,32,32).transpose(1,2,0)
+def show_svhn(img, i, title=""): # expects flattened image of shape (3072,) 
+    img = img.copy().reshape(3,32,32).transpose(1,2,0)
     img *= svhn_std
     img += svhn_mean
     img /= 255.0
-    plt.figure(figsize=(2,2))
+    plt.subplot(3, 2, i)
+    plt.imshow(img)
     plt.title(title)
     plt.axis("off")
-    plt.imshow(img)
-    plt.show()
 
-def adv_test(orig_img = 0, target_img = 1):
+def adv_test(orig_img = 0, target_img = 1, C = 200.0):
     # Set the adversarial noise to zero
     l_noise.b.set_value(np.zeros((3,32,32)).astype(np.float32))
     
+    plt.figure(figsize=(10,10))
     # Get latent variables of the target
     adv_mean_log_var = theano.function([sym_x], [mean, log_var])
-    adv_mean_values, adv_log_var_values = adv_mean_log_var(np.tile(train_x[target_img],batch_size).reshape(batch_size, 3, 32, 32))
+    adv_mean_values, adv_log_var_values = adv_mean_log_var(np.tile(test_x[target_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))
     adv_mean_values = adv_mean_values[0]
     adv_log_var_values = adv_log_var_values[0]
 
     # Plot original reconstruction    
-    show_svhn(test_x[orig_img], "Original image")
-    show_svhn(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))[0], "Original reconstruction")
+    show_svhn(test_x[orig_img], 1, "Original image")
+    show_svhn(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))[0], 2, "Original reconstruction")
 
     # Initialize the adversarial noise for the optimization procedure
-    l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, size=(3,32,32)).astype(np.float32))
+    l_noise.b.set_value(np.random.uniform(-1e-3, 1e-3, size=(3,32,32)).astype(np.float32))
     
     # Optimization function for L-BFGS-B
     def fmin_func(x):
         l_noise.b.set_value(x.reshape(3, 32, 32).astype(np.float32))
-        #f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[target_img], 1.0)
-        f, g = adv_function(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32), adv_mean_values, adv_log_var_values, 1.0)
+        f, g = adv_function(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32), adv_mean_values, adv_log_var_values, C)
         return float(f), g.flatten().astype(np.float64)
         
     # Noise bounds (pixels cannot exceed 0-1)
-    #bounds = zip(-train_x[orig_img].flatten(), 1-train_x[orig_img].flatten())
+    bounds = zip(-svhn_mean/svhn_std-test_x[orig_img].flatten(), (255.0-svhn_mean)/svhn_std-test_x[orig_img].flatten())
     
     # L-BFGS-B optimization to find adversarial noise
-    x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value().flatten(), fprime = None, factr = 10, m = 25)
+    x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value().flatten(), bounds = bounds, fprime = None, factr = 10, m = 25)
     
     # Plotting results
-    show_svhn(x, "Adversarial noise")
-    show_svhn((test_x[orig_img].flatten()+x), "Adversarial image")
-    show_svhn(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))[0], "Reconstructed adversarial image")
-    show_svhn(test_x[target_img] , "Target image")
+    show_svhn(x, 3, "Adversarial noise")
+    show_svhn(test_x[target_img], 4, "Target image")
+    show_svhn((test_x[orig_img].flatten()+x), 5, "Adversarial image")
+    show_svhn(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))[0], 6, "Adversarial reconstruction")
+
+    plt.show()
 
     # Adversarial noise norm
     print("Adversarial distortion norm", (x**2.0).sum())
