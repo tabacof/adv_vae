@@ -210,16 +210,18 @@ if do_train_model:
         np.random.shuffle(train_x)
         sh_x_train.set_value(train_x)
 
-#        results = plot_results(0)
-#        plt.figure(figsize=(2, nplots))
-#        for i in range(0,nplots):
-#            plt.subplot(nplots,2,(i+1)*2-1)
-#            plt.imshow((std*test_x[i].transpose(1,2,0)+train_mean)/255.0)
-#            plt.axis('off')
-#            plt.subplot(nplots,2,(i+1)*2)
-#            plt.imshow((std*results[i].reshape(1,64,64).transpose(1,2,0)+train_mean/255.0)
-#            plt.axis('off')
-#        plt.savefig(results_out+"/epoch_"+str(epoch)+".pdf", bbox_inches='tight')
+        results = plot_results(0)
+        plt.figure(figsize=(2, nplots))
+        
+        for i in range(0,nplots):
+            plt.subplot(nplots,2,(i+1)*2-1)
+            plt.imshow((std*test_x[i].reshape(64,64)+train_mean)/255.0, cmap='gray')
+            plt.axis('off')
+            plt.subplot(nplots,2,(i+1)*2)
+            plt.imshow((std*results[i].reshape(64,64)+train_mean)/255.0, cmap='gray')
+            plt.axis('off')
+            
+        plt.savefig(results_out+"/epoch_"+str(epoch)+".pdf", bbox_inches='tight')
         
         train_cost = train_epoch(lr)
         test_cost = test_epoch()
