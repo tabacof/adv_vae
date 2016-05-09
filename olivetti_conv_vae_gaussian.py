@@ -16,7 +16,10 @@ from parmesan.distributions import log_normal2, kl_normal2_stdnormal
 from parmesan.layers import SimpleSampleLayer
 import time, shutil, os
 import scipy
-import pylab as plt
+from scipy.io import loadmat
+import matplotlib
+#matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from read_write_model import read_model, write_model
 from sklearn.datasets import fetch_olivetti_faces
 from sklearn.cross_validation import train_test_split
@@ -26,13 +29,12 @@ filename_script = os.path.basename(os.path.realpath(__file__))
 #settings
 do_train_model = True
 batch_size = 100
-nonlin_enc = T.nnet.softplus
-nonlin_dec = T.nnet.softplus
-latent_size = 32*32*3
+latent_size = 200
 analytic_kl_term = True
-lr = 0.0003
-num_epochs = 200
+lr = 0.0002
+num_epochs = 100
 model_filename = "olivetti_conv_vae"
+nplots = 15
 
 results_out = os.path.join("results", os.path.splitext(filename_script)[0])
 
@@ -48,27 +50,31 @@ logfile = os.path.join(results_out, 'logfile.log')
 sym_x = T.tensor4()
 sym_lr = T.scalar('lr')
 
-valid_x = None
+### LOAD DATA
+print "Using Olivetti dataset"
 
-print "Loading Olivetti db"
+#svhn_train = loadmat('train_32x32.mat')
+#svhn_test = loadmat('test_32x32.mat')
+#
+#train_x = np.rollaxis(svhn_train['X'], 3).transpose(0,3,1,2).astype(theano.config.floatX)
+#test_x = np.rollaxis(svhn_test['X'], 3).transpose(0,3,1,2).astype(theano.config.floatX)
+#
+#mean = 115.11177966923525
+#std = 50.819267906232888
+#train_x = (train_x - mean)/std
+#test_x = (test_x - mean)/std
 
-
-#svhn_train = scipy.io.loadmat('train_32x32.mat')
-#svhn_test = scipy.io.loadmat('test_32x32.mat')
 train_aux = fetch_olivetti_faces()
 train_x, test_x, train_y, test_y = train_test_split(train_aux.images,train_aux.target, test_size=0.20, random_state=42)
 del train_aux
 
-#train_x.mean
-svhn_mean = 0.54707342
-svhn_std = 0.17110047
-#svhn_mean = 115.11177966923525
-#svhn_std = 50.819267906232888
-train_x = (train_x - svhn_mean)/svhn_std
-test_x = (test_x - svhn_mean)/svhn_std
+train_mean = np.mean(train_x)
+std = np.std(train_x)
+train_x = (train_x - train_mean)/std
+test_x = (test_x - train_mean)/std
 
 train_x = train_x.astype(theano.config.floatX)
-train_x = train_x.reshape(320,1, 64, 64)
+train_x = train_x.reshape(-1,1, 64, 64)
 test_x = test_x.astype(theano.config.floatX)
 test_x = test_x.reshape(-1, 1, 64, 64)
 
@@ -79,13 +85,15 @@ n_test_batches = test_x.shape[0] / batch_size
 sh_x_train = theano.shared(train_x, borrow=True)
 sh_x_test = theano.shared(test_x, borrow=True)
 
+dim1, dim2, dim3 = 1, 64, 64
+
 ### RECOGNITION MODEL q(z|x)
-#l_in = lasagne.layers.InputLayer((batch_size, 3, 32, 32))
-l_in = lasagne.layers.InputLayer((batch_size, 1, 64, 64))
-#l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros(nfeatures, dtype = np.float32), name = "NOISE")
-#l_noise.params[l_noise.b].remove("trainable")
-l_enc_h1 = lasagne.layers.Conv2DLayer(l_in, num_filters = 64, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
-l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
+l_in = lasagne.layers.InputLayer((batch_size, dim1, dim2, dim3))
+l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros((dim1, dim2, dim3), dtype = np.float32), shared_axes = 0, name = "NOISE")
+l_noise.params[l_noise.b].remove("trainable")
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_noise, num_filters = dim2, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 64, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
 l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=512, nonlinearity=lasagne.nonlinearities.elu, name='ENC_DENSE2')
 
 l_mu = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_MU')
@@ -99,9 +107,10 @@ l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=512, nonlinearity=lasagne.no
 l_dec_h1 = lasagne.layers.ReshapeLayer(l_dec_h1, (batch_size, -1, 4, 4))
 l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 128, crop="same",filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV1')
 l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 64, crop="same",filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV2')
-l_dec_x_mu = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 1,filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_MU')
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = dim2, filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV3')
+l_dec_x_mu = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 4,filter_size = 4, nonlinearity = lasagne.nonlinearities.identity, name = 'DEC_MU')
 l_dec_x_mu = lasagne.layers.ReshapeLayer(l_dec_x_mu, (batch_size, -1))
-l_dec_x_log_var = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 1,filter_size = 4, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_LOG_VAR')
+l_dec_x_log_var = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 4,filter_size = 4, nonlinearity = lasagne.nonlinearities.identity, name = 'DEC_LOG_VAR')
 l_dec_x_log_var = lasagne.layers.ReshapeLayer(l_dec_x_log_var, (batch_size, -1))
 
 # Get outputs from model
@@ -115,9 +124,8 @@ z_eval, z_mu_eval, z_log_var_eval, x_mu_eval, x_log_var_eval = lasagne.layers.ge
     [l_z, l_mu, l_log_var, l_dec_x_mu, l_dec_x_log_var], sym_x, deterministic=True
 )
 
-
 #Calculate the loglikelihood(x) = E_q[ log p(x|z) + log p(z) - log q(z|x)]
-def latent_gaussian_x_bernoulli(z, z_mu, z_log_var, x_mu, x_log_var, x):
+def ELBO(z, z_mu, z_log_var, x_mu, x_log_var, x):
     """
     Latent z       : gaussian with standard normal prior
     decoder output : bernoulli
@@ -131,18 +139,16 @@ def latent_gaussian_x_bernoulli(z, z_mu, z_log_var, x_mu, x_log_var, x):
     x: (batch_size, num_features)
     """
     kl_term = kl_normal2_stdnormal(z_mu, z_log_var).sum(axis=1)
-    log_px_given_z = log_normal2(x.reshape((batch_size, -1)), x_mu, x_log_var).sum()
+    log_px_given_z = log_normal2(x.reshape((batch_size, -1)), x_mu, x_log_var).sum(axis=1)
     LL = T.mean(-kl_term + log_px_given_z)
 
     return LL
 
 # TRAINING LogLikelihood
-LL_train = latent_gaussian_x_bernoulli(
-    z_train, z_mu_train, z_log_var_train, x_mu_train, x_log_var_train, sym_x)
+LL_train = ELBO(z_train, z_mu_train, z_log_var_train, x_mu_train, x_log_var_train, sym_x)
 
 # EVAL LogLikelihood
-LL_eval = latent_gaussian_x_bernoulli(
-    z_eval, z_mu_eval, z_log_var_eval, x_mu_eval, x_log_var_eval, sym_x)
+LL_eval = ELBO(z_eval, z_mu_eval, z_log_var_eval, x_mu_eval, x_log_var_eval, sym_x)
 
 
 params = lasagne.layers.get_all_params([l_dec_x_mu, l_dec_x_log_var], trainable=True)
@@ -171,6 +177,9 @@ train_model = theano.function([sym_batch_index, sym_lr], LL_train, updates=updat
 
 test_model = theano.function([sym_batch_index], LL_eval,
                                   givens={sym_x: sh_x_test[batch_slice]},)
+        
+plot_results = theano.function([sym_batch_index], x_mu_eval,
+                                  givens={sym_x: sh_x_test[batch_slice]},)
 
 def train_epoch(lr):
     costs = []
@@ -196,6 +205,17 @@ if do_train_model:
         np.random.shuffle(train_x)
         sh_x_train.set_value(train_x)
 
+#        results = plot_results(0)
+#        plt.figure(figsize=(2, nplots))
+#        for i in range(0,nplots):
+#            plt.subplot(nplots,2,(i+1)*2-1)
+#            plt.imshow((std*test_x[i].transpose(1,2,0)+train_mean)/255.0)
+#            plt.axis('off')
+#            plt.subplot(nplots,2,(i+1)*2)
+#            plt.imshow((std*results[i].reshape(1,64,64).transpose(1,2,0)+train_mean/255.0)
+#            plt.axis('off')
+#        plt.savefig(results_out+"/epoch_"+str(epoch)+".pdf", bbox_inches='tight')
+        
         train_cost = train_epoch(lr)
         test_cost = test_epoch()
 
@@ -244,50 +264,65 @@ adv_grad = T.grad(adv_loss, l_noise.b)
 # Function used to optimize the adversarial noise
 adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv_grad])
 
-# Set the adversarial noise to zero
-l_noise.b.set_value(np.zeros(nfeatures).astype(np.float32))
-
-# Get latent variables of the target
-adv_mean_log_var = theano.function([sym_x], [mean, log_var])
-adv_mean_values, adv_log_var_values = adv_mean_log_var(train_x[target_img][np.newaxis, :])
 # Plot original reconstruction
 adv_plot = theano.function([sym_x], reconstruction)
 
-def show_cifar(img, title=""): # expects flattened image of shape (3072,) 
-    img = img.reshape(64,64)
-    img *= svhn_std
-    img += svhn_mean
-    plt.figure(figsize=(0.5,0.5))
+
+def show_img(img, i, title=""): # expects flattened image of shape (3072,) 
+    if dim1>1:
+        img = img.copy().reshape(dim1,dim2,dim3).transpose(1,2,0)
+    else:
+        img = img.copy().reshape(dim2,dim3)
+    img *= std
+    img += train_mean
+    img /= 255.0
+    plt.subplot(3, 2, i)
+    if dim1>1:
+        plt.imshow(img)
+    else:
+        plt.imshow(img, cmap='gray')
     plt.title(title)
     plt.axis("off")
-    plt.imshow(img)
+
+def adv_test(orig_img = 0, target_img = 1, C = 200.0):
+    # Set the adversarial noise to zero
+    l_noise.b.set_value(np.zeros((dim1,dim2,dim3)).astype(np.float32))
+    
+    plt.figure(figsize=(10,10))
+    # Get latent variables of the target
+    adv_mean_log_var = theano.function([sym_x], [mean, log_var])
+    adv_mean_values, adv_log_var_values = adv_mean_log_var(np.tile(test_x[target_img], (batch_size, 1, 1, 1)).reshape(batch_size, dim1,dim2,dim3))
+    adv_mean_values = adv_mean_values[0]
+    adv_log_var_values = adv_log_var_values[0]
+
+    # Plot original reconstruction    
+    show_img(test_x[orig_img], 1, "Original image")
+    show_img(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, dim1,dim2,dim3))[0], 2, "Original reconstruction")
+
+    # Initialize the adversarial noise for the optimization procedure
+    l_noise.b.set_value(np.random.uniform(-1e-3, 1e-3, size=(dim1,dim2,dim3)).astype(np.float32))
+    
+    # Optimization function for L-BFGS-B
+    def fmin_func(x):
+        l_noise.b.set_value(x.reshape(dim1,dim2,dim3).astype(np.float32))
+        f, g = adv_function(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, dim1,dim2,dim3), adv_mean_values, adv_log_var_values, C)
+        return float(f), g.flatten().astype(np.float64)
+        
+    # Noise bounds (pixels cannot exceed 0-1)
+    bounds = zip(-train_mean/std-test_x[orig_img].flatten(), (255.0-train_mean)/std-test_x[orig_img].flatten())
+    
+    # L-BFGS-B optimization to find adversarial noise
+    x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value().flatten(), bounds = bounds, fprime = None, factr = 10, m = 25)
+    
+    # Plotting results
+    show_img(x, 3, "Adversarial noise")
+    show_img(test_x[target_img], 4, "Target image")
+    show_img((test_x[orig_img].flatten()+x), 5, "Adversarial image")
+    show_img(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, dim1,dim2,dim3))[0], 6, "Adversarial reconstruction")
+
     plt.show()
 
-show_cifar(train_x[orig_img])
-show_cifar(adv_plot(train_x[orig_img][np.newaxis, :]))
-
-# Initialize the adversarial noise for the optimization procedure
-l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, nfeatures).astype(np.float32))
-
-# Optimization function for L-BFGS-B
-def fmin_func(x):
-    l_noise.b.set_value(x.astype(np.float32))
-    #f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[target_img], 1.0)
-    f, g = adv_function(train_x[orig_img][np.newaxis,:], adv_mean_values.squeeze(), adv_log_var_values.squeeze(), 1.0)
-    return float(f), g.astype(np.float64)
+    # Adversarial noise norm
+    print("Adversarial distortion norm", (x**2.0).sum())
     
-# Noise bounds (pixels cannot exceed 0-1)
-bounds = zip(-train_x[orig_img], 1-train_x[orig_img])
-# L-BFGS-B optimization to find adversarial noise
-x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value(), fprime = None, bounds = bounds, factr = 10, m = 25)
-
-# Plotting results
-show_cifar(train_x[orig_img], "Original image")
-show_cifar(train_x[target_img] , "Target image")
-show_cifar(x, "Adversarial noise")
-show_cifar((train_x[orig_img]+x), "Adversarial image")
-show_cifar(adv_plot(train_x[orig_img][np.newaxis, :]), "Reconstructed adversarial image")
-
-# Adversarial noise norm
-print((x**2.0).sum())
-
+adv_test()
