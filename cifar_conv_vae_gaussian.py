@@ -14,9 +14,10 @@ import numpy as np
 import lasagne
 from parmesan.distributions import log_normal2, kl_normal2_stdnormal
 from parmesan.layers import SimpleSampleLayer
+from parmesan.datasets import load_cifar10
+
 import time, shutil, os
 import scipy
-from scipy.io import loadmat
 import matplotlib
 matplotlib.use('Agg')
 import pylab as plt
@@ -25,13 +26,13 @@ from read_write_model import read_model, write_model
 filename_script = os.path.basename(os.path.realpath(__file__))
 
 #settings
-do_train_model = False
+do_train_model = True
 batch_size = 100
 latent_size = 100
 analytic_kl_term = True
 lr = 0.0002
-num_epochs = 25
-model_filename = "svhn_conv_vae"
+num_epochs = 100
+model_filename = "cifar_conv_vae"
 nplots = 15
 
 results_out = os.path.join("results", os.path.splitext(filename_script)[0])
@@ -49,18 +50,17 @@ sym_x = T.tensor4()
 sym_lr = T.scalar('lr')
 
 ### LOAD DATA
-print "Using SVHN dataset"
+print "Using CIFAR dataset"
 
-svhn_train = loadmat('train_32x32.mat')
-svhn_test = loadmat('test_32x32.mat')
-
-train_x = np.rollaxis(svhn_train['X'], 3).transpose(0,3,1,2).astype(theano.config.floatX)
-test_x = np.rollaxis(svhn_test['X'], 3).transpose(0,3,1,2).astype(theano.config.floatX)
-
-svhn_mean = 115.11177966923525
-svhn_std = 50.819267906232888
-train_x = (train_x - svhn_mean)/svhn_std
-test_x = (test_x - svhn_mean)/svhn_std
+train_x, train_y, test_x, test_y = load_cifar10(normalize=False,dequantify=False)
+train_x = train_x.transpose(0,3,1,2).astype(theano.config.floatX)
+test_x = test_x.transpose(0,3,1,2).astype(theano.config.floatX)
+del train_y, test_y
+    
+cifar_mean = 120.70748
+cifar_std = 64.150024
+train_x = (train_x - cifar_mean)/cifar_std
+test_x = (test_x - cifar_mean)/cifar_std
 
 n_train_batches = train_x.shape[0] / batch_size
 n_test_batches = test_x.shape[0] / batch_size
@@ -192,10 +192,10 @@ if do_train_model:
         plt.figure(figsize=(2, nplots))
         for i in range(0,nplots):
             plt.subplot(nplots,2,(i+1)*2-1)
-            plt.imshow((svhn_std*test_x[i].transpose(1,2,0)+svhn_mean)/255.0)
+            plt.imshow((cifar_std*test_x[i].transpose(1,2,0)+cifar_mean)/255.0)
             plt.axis('off')
             plt.subplot(nplots,2,(i+1)*2)
-            plt.imshow((svhn_std*results[i].reshape(3,32,32).transpose(1,2,0)+svhn_mean)/255.0)
+            plt.imshow((cifar_std*results[i].reshape(3,32,32).transpose(1,2,0)+cifar_mean)/255.0)
             plt.axis('off')
         plt.savefig(results_out+"/epoch_"+str(epoch)+".pdf", bbox_inches='tight')
             
@@ -245,8 +245,8 @@ adv_plot = theano.function([sym_x], reconstruction)
 
 def show_svhn(img, i, title=""): # expects flattened image of shape (3072,) 
     img = img.copy().reshape(3,32,32).transpose(1,2,0)
-    img *= svhn_std
-    img += svhn_mean
+    img *= cifar_std
+    img += cifar_mean
     img /= 255.0
     plt.subplot(3, 2, i)
     plt.imshow(img)
@@ -279,7 +279,7 @@ def adv_test(orig_img = 0, target_img = 1, C = 200.0, plot = True):
         return float(f), g.flatten().astype(np.float64)
         
     # Noise bounds (pixels cannot exceed 0-1)
-    bounds = zip(-svhn_mean/svhn_std-test_x[orig_img].flatten(), (255.0-svhn_mean)/svhn_std-test_x[orig_img].flatten())
+    bounds = zip(-cifar_mean/cifar_std-test_x[orig_img].flatten(), (255.0-cifar_mean)/cifar_std-test_x[orig_img].flatten())
     
     # L-BFGS-B optimization to find adversarial noise
     x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value().flatten(), bounds = bounds, fprime = None, factr = 10, m = 25)
