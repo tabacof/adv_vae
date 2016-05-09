@@ -67,12 +67,12 @@ print "Using Olivetti dataset"
 train_aux = fetch_olivetti_faces()
 train_x, test_x, train_y, test_y = train_test_split(train_aux.images,train_aux.target, test_size=0.20, random_state=42)
 del train_aux
-#train_x = train_x * 255
-#test_x = test_x * 255
-#train_mean = np.mean(train_x)
-#std = np.std(train_x)
-#train_x = (train_x - train_mean)/std
-#test_x = (test_x - train_mean)/std
+train_x = train_x * 255
+test_x = test_x * 255
+train_mean = np.mean(train_x)
+std = np.std(train_x)
+train_x = (train_x - train_mean)/std
+test_x = (test_x - train_mean)/std
 
 train_x = train_x.astype(theano.config.floatX)
 train_x = train_x.reshape(-1,1, 64, 64)
@@ -278,9 +278,9 @@ def show_img(img, i, title=""): # expects flattened image of shape (3072,)
         img = img.copy().reshape(dim1,dim2,dim3).transpose(1,2,0)
     else:
         img = img.copy().reshape(dim2,dim3)
-#    img *= std
-#    img += train_mean
-#    img /= 255.0
+    img *= std
+    img += train_mean
+    img /= 255.0
     plt.subplot(3, 2, i)
     if dim1>1:
         plt.imshow(img)
@@ -314,8 +314,8 @@ def adv_test(orig_img = 0, target_img = 1, C = 200.0):
         return float(f), g.flatten().astype(np.float64)
         
     # Noise bounds (pixels cannot exceed 0-1)
-    #bounds = zip(-train_mean/std-test_x[orig_img].flatten(), (255.0-train_mean)/std-test_x[orig_img].flatten())
-    bounds = zip(-test_x[orig_img].flatten(), 1-test_x[orig_img].flatten())
+    bounds = zip(-train_mean/std-test_x[orig_img].flatten(), (255.0-train_mean)/std-test_x[orig_img].flatten())
+    #bounds = zip(-test_x[orig_img].flatten(), 1-test_x[orig_img].flatten())
     
     # L-BFGS-B optimization to find adversarial noise
     x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value().flatten(), bounds = bounds, fprime = None, factr = 10, m = 25)
