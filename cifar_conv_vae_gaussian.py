@@ -26,7 +26,7 @@ from read_write_model import read_model, write_model
 filename_script = os.path.basename(os.path.realpath(__file__))
 
 #settings
-do_train_model = True
+do_train_model = False
 batch_size = 100
 latent_size = 100
 analytic_kl_term = True
