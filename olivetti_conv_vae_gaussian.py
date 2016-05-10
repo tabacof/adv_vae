@@ -29,7 +29,7 @@ filename_script = os.path.basename(os.path.realpath(__file__))
 #settings
 do_train_model = True
 batch_size = 100
-latent_size = 200
+latent_size = 500
 analytic_kl_term = True
 lr = 0.0002
 num_epochs = 100
@@ -97,9 +97,9 @@ l_in = lasagne.layers.InputLayer((batch_size, dim1, dim2, dim3))
 l_noise = lasagne.layers.BiasLayer(l_in, b = np.zeros((dim1, dim2, dim3), dtype = np.float32), shared_axes = 0, name = "NOISE")
 l_noise.params[l_noise.b].remove("trainable")
 l_enc_h1 = lasagne.layers.Conv2DLayer(l_noise, num_filters = dim2, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV1')
-l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 64, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
-l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
-l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=512, nonlinearity=lasagne.nonlinearities.elu, name='ENC_DENSE2')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 128, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV2')
+l_enc_h1 = lasagne.layers.Conv2DLayer(l_enc_h1, num_filters = 512, filter_size = 4, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'ENC_CONV3')
+l_enc_h1 = lasagne.layers.DenseLayer(l_enc_h1, num_units=1024, nonlinearity=lasagne.nonlinearities.elu, name='ENC_DENSE2')
 
 l_mu = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_MU')
 l_log_var = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinearity=lasagne.nonlinearities.identity, name='ENC_Z_LOG_VAR')
@@ -108,14 +108,14 @@ l_log_var = lasagne.layers.DenseLayer(l_enc_h1, num_units=latent_size, nonlinear
 l_z = SimpleSampleLayer(mean=l_mu, log_var=l_log_var)
 
 ### GENERATIVE MODEL p(x|z)
-l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=512, nonlinearity=lasagne.nonlinearities.elu, name='DEC_DENSE1')
+l_dec_h1 = lasagne.layers.DenseLayer(l_z, num_units=1024, nonlinearity=lasagne.nonlinearities.elu, name='DEC_DENSE1')
 l_dec_h1 = lasagne.layers.ReshapeLayer(l_dec_h1, (batch_size, -1, 4, 4))
-l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 128, crop="same",filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV1')
-l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 64, crop="same",filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV2')
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 512, crop="same", filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV1')
+l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 128, crop="same", filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV2')
 l_dec_h1 = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = dim2, filter_size = 5, stride = 2, nonlinearity = lasagne.nonlinearities.elu, name = 'DEC_CONV3')
-l_dec_x_mu = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 4,filter_size = 4, nonlinearity = lasagne.nonlinearities.identity, name = 'DEC_MU')
+l_dec_x_mu = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 1,filter_size = 36, nonlinearity = lasagne.nonlinearities.identity, name = 'DEC_MU')
 l_dec_x_mu = lasagne.layers.ReshapeLayer(l_dec_x_mu, (batch_size, -1))
-l_dec_x_log_var = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 4,filter_size = 4, nonlinearity = lasagne.nonlinearities.identity, name = 'DEC_LOG_VAR')
+l_dec_x_log_var = lasagne.layers.TransposedConv2DLayer(l_dec_h1, num_filters = 1,filter_size = 36, nonlinearity = lasagne.nonlinearities.identity, name = 'DEC_LOG_VAR')
 l_dec_x_log_var = lasagne.layers.ReshapeLayer(l_dec_x_log_var, (batch_size, -1))
 
 # Get outputs from model
@@ -222,6 +222,7 @@ if do_train_model:
             plt.axis('off')
             
         plt.savefig(results_out+"/epoch_"+str(epoch)+".pdf", bbox_inches='tight')
+        plt.close()
         
         train_cost = train_epoch(lr)
         test_cost = test_epoch()
