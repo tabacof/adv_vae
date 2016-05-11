@@ -32,7 +32,7 @@ batch_size = 100
 latent_size = 500
 analytic_kl_term = True
 lr = 0.0002
-num_epochs = 100
+num_epochs = 300
 model_filename = "olivetti_conv_vae"
 nplots = 15
 
@@ -244,8 +244,8 @@ def kld(mean1, log_var1, mean2, log_var2):
     return mean_term + log_var2 - log_var1 - 0.5
 
 # Original and target images
-orig_img = 13
-target_img = 1
+orig_img = 2
+target_img = 11
 
 # Autoencoder outputs
 mean, log_var, reconstruction = lasagne.layers.get_output(
@@ -334,4 +334,4 @@ def adv_test(orig_img = 0, target_img = 1, C = 200.0):
     # Adversarial noise norm
     print("Adversarial distortion norm", (x**2.0).sum())
     
-adv_test()
+adv_test(orig_img, target_img)
