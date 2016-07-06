@@ -17,22 +17,26 @@ from parmesan.layers import SimpleSampleLayer
 from parmesan.datasets import load_mnist_realval, load_mnist_binarized
 import time, shutil, os
 import scipy
+import matplotlib
+matplotlib.use('Agg')
 import pylab as plt
 import cPickle as cPkl
 
 filename_script = os.path.basename(os.path.realpath(__file__))
 
 #settings
-do_train_model = False
+do_train_model = True
+model_filename = "mnist_model"
+nplots = 5
 dataset = 'fixed'
 batch_size = 100
-nhidden = 200
-nonlin_enc = T.nnet.softplus
-nonlin_dec = T.nnet.softplus
+nhidden = 400
+nonlin_enc = lasagne.nonlinearities.rectify
+nonlin_dec = lasagne.nonlinearities.rectify
 latent_size = 100
 analytic_kl_term = True
-lr = 0.0003
-num_epochs = 150
+lr = 0.0002
+num_epochs = 50
 results_out = os.path.join("results", os.path.splitext(filename_script)[0])
 
 np.random.seed(1234) # reproducibility
@@ -47,11 +51,9 @@ logfile = os.path.join(results_out, 'logfile.log')
 sym_x = T.matrix()
 sym_lr = T.scalar('lr')
 
-
 #Helper functions
 def bernoullisample(x):
     return np.random.binomial(1,x,size=x.shape).astype(theano.config.floatX)
-
 
 ### LOAD DATA
 if dataset is 'sample':
@@ -156,7 +158,6 @@ max_norm = 5
 mgrads = lasagne.updates.total_norm_constraint(grads,max_norm=max_norm)
 cgrads = [T.clip(g,-clip_grad, clip_grad) for g in mgrads]
 
-
 #Setup the theano functions
 sym_batch_index = T.iscalar('index')
 batch_slice = slice(sym_batch_index * batch_size, (sym_batch_index + 1) * batch_size)
@@ -168,6 +169,9 @@ train_model = theano.function([sym_batch_index, sym_lr], LL_train, updates=updat
 
 test_model = theano.function([sym_batch_index], LL_eval,
                                   givens={sym_x: sh_x_test[batch_slice], },)
+                                  
+plot_results = theano.function([sym_batch_index], x_mu_eval,
+                                  givens={sym_x: sh_x_test[batch_slice]},)
 
 PARAM_EXTENSION = 'params'
 
@@ -211,6 +215,25 @@ if do_train_model:
         np.random.shuffle(train_x)
         sh_x_train.set_value(preprocesses_dataset(train_x))
 
+        if nplots:
+            np.random.shuffle(test_x)
+            sh_x_test.set_value(preprocesses_dataset(test_x))
+            
+            results = plot_results(0)
+            plt.figure(figsize=(3, nplots))
+            for i in range(0,nplots):
+                plt.subplot(nplots,2,(i+1)*2-1)
+                plt.imshow(test_x[i].reshape(28,28), cmap='Greys_r')
+                if i == 0:
+                    plt.title("Input")
+                plt.axis('off')
+                plt.subplot(nplots,2,(i+1)*2)
+                plt.imshow(results[i].reshape(28, 28), cmap='Greys_r')
+                if i == 0:
+                    plt.title("Output")
+                plt.axis('off')
+            plt.savefig(results_out+"/epoch_"+str(epoch)+".pdf", bbox_inches='tight')
+                
         train_cost = train_epoch(lr)
         test_cost = test_epoch()
 
@@ -222,10 +245,10 @@ if do_train_model:
             f.write(line + "\n")
     
     print "Write model data"
-    write_model_data(l_dec_x_mu, "mnist_model")
+    write_model_data(l_dec_x_mu, model_filename)
 else:
     print "Load model data"
-    read_model_data(l_dec_x_mu, "mnist_model")
+    read_model_data(l_dec_x_mu, model_filename)
        
 # Adversarial image generation for VAEs
 def kld(mean1, log_var1, mean2, log_var2):
@@ -256,53 +279,61 @@ adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv
 
 # Helper to plot reconstructions    
 adv_plot = theano.function([sym_x], reconstruction)
-
-def adv_test(orig_img = 0, target_img = 1):
+    
+def show_mnist(fig, img, i, title=""):
+    ax = fig.add_subplot(3, 2, i)
+    ax.imshow(img.copy().reshape(28,28), cmap='Greys_r')
+    ax.set_title(title)
+    ax.tick_params(axis=u'both', which=u'both',length=0)
+    ax.grid(b=False)
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    return ax
+    
+def adv_test(orig_img = 0, target_img = 1, C = 1, plot = True):
     # Set the adversarial noise to zero
     l_noise.b.set_value(np.zeros(nfeatures).astype(np.float32))
     
     # Get latent variables of the target
     adv_mean_log_var = theano.function([sym_x], [mean, log_var])
-    adv_mean_values, adv_log_var_values = adv_mean_log_var(train_x[target_img][np.newaxis, :])
-    
+    adv_mean_values, adv_log_var_values = adv_mean_log_var(test_x[target_img][np.newaxis, :])
+        
     # Plot original image and its reconstruction
-    plt.imshow(train_x[orig_img].reshape(28,28), cmap='Greys_r')
-    plt.title("Original image")
-    plt.show() 
-    plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
-    plt.title("Reconstructed image")
-    plt.show()
-    
+    if plot:
+        fig = plt.figure(figsize=(6,10))
+        ax = show_mnist(fig, test_x[orig_img], 1, "Input")
+        ax.set_ylabel("Original")
+        show_mnist(fig, adv_plot(test_x[orig_img][np.newaxis]), 2, "Output")
+
     # Initialize the adversarial noise for the optimization procedure
     l_noise.b.set_value(np.random.uniform(-1e-5, 1e-5, nfeatures).astype(np.float32))
     
     # Optimization function for L-BFGS-B
     def fmin_func(x):
         l_noise.b.set_value(x.astype(np.float32))
-        #f, g = adv_function(train_x[orig_img][np.newaxis,:], train_x[target_img], 1.0)
-        f, g = adv_function(train_x[orig_img][np.newaxis,:], adv_mean_values.squeeze(), adv_log_var_values.squeeze(), 1.0)
+        f, g = adv_function(test_x[orig_img][np.newaxis], adv_mean_values.squeeze(), adv_log_var_values.squeeze(), C)
         return float(f), g.astype(np.float64)
         
     # Noise bounds (pixels cannot exceed 0-1)
-    bounds = zip(-train_x[orig_img], 1-train_x[orig_img])
+    bounds = zip(-test_x[orig_img], 1-test_x[orig_img])
     # L-BFGS-B optimization to find adversarial noise
     x, f, d = scipy.optimize.fmin_l_bfgs_b(fmin_func, l_noise.b.get_value(), fprime = None, bounds = bounds, factr = 10, m = 25)
     
-    # Plotting results
-    plt.imshow(x.reshape(28,28), cmap='Greys_r')
-    plt.title("Adversarial noise")
-    plt.show()
-    plt.imshow((train_x[orig_img]+x).reshape(28,28), cmap='Greys_r')
-    plt.title("Adversarial image")
-    plt.show()
-    plt.imshow(adv_plot(train_x[orig_img][np.newaxis, :]).reshape(28,28), cmap='Greys_r')
-    plt.title("Reconstructed adversarial image")
-    plt.show()
-    plt.imshow(train_x[target_img].reshape(28,28), cmap='Greys_r')
-    plt.title("Target image")
-    plt.show()
+    adv_img = adv_plot(test_x[orig_img][np.newaxis])
     
-    # Adversarial noise norm
-    print("Adversarial distortion norm", (x**2.0).sum())
+    # Plotting results
+    if plot:
+        ax = show_mnist(fig, (test_x[orig_img].flatten()+x), 3)
+        ax.set_ylabel("Adversarial")
+        show_mnist(fig, adv_img, 4)
+        show_mnist(fig, x, 5, "Adversarial noise")
+        show_mnist(fig, test_x[target_img], 6, "Target image")
+        plt.savefig(results_out+"/adv_"+str(orig_img)+"_"+str(target_img)+".pdf", bbox_inches='tight')
+        plt.show()
+        
+    # Adversarial noise norm    
+    return np.linalg.norm(x), np.linalg.norm(adv_img - test_x[target_img])
 
-adv_test()
+od, ad = adv_test(10, 1231, C=0.75, plot = True)
+od, ad = adv_test(2440, 9231, C=0.75, plot = True)
+od, ad = adv_test(5003, 6002, C=0.75, plot = True)

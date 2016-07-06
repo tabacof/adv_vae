@@ -243,17 +243,22 @@ adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv
 # Helper to plot reconstructions    
 adv_plot = theano.function([sym_x], reconstruction)
 
-def show_svhn(img, i, title=""): # expects flattened image of shape (3072,) 
+def show_svhn(fig, img, i, title=""): # expects flattened image of shape (3072,) 
     img = img.copy().reshape(3,32,32).transpose(1,2,0)
     img *= svhn_std
     img += svhn_mean
     img /= 255.0
-    plt.subplot(3, 2, i)
-    plt.imshow(img)
-    plt.title(title)
-    plt.axis("off")
+    img = np.clip(img, 0, 1)
+    ax = fig.add_subplot(3, 2, i)
+    ax.imshow(img)
+    ax.set_title(title)
+    ax.tick_params(axis=u'both', which=u'both',length=0)
+    ax.grid(b=False)
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    return ax
 
-def adv_test(orig_img = 0, target_img = 1, C = 200.0, plot = True):
+def adv_test(orig_img = 0, target_img = 1, C = 100.0, plot = True):
     # Set the adversarial noise to zero
     l_noise.b.set_value(np.zeros((3,32,32)).astype(np.float32))
     
@@ -265,9 +270,10 @@ def adv_test(orig_img = 0, target_img = 1, C = 200.0, plot = True):
 
     # Plot original reconstruction    
     if plot:
-        plt.figure(figsize=(10,10))
-        show_svhn(test_x[orig_img], 1, "Original image")
-        show_svhn(adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))[0], 2, "Original reconstruction")
+        fig = plt.figure(figsize=(6,10))
+        ax = show_svhn(fig, test_x[orig_img], 1, "Input")
+        ax.set_ylabel("Original")
+        show_svhn(fig, adv_plot(np.tile(test_x[orig_img], (batch_size, 1, 1, 1)).reshape(batch_size, 3, 32, 32))[0], 2, "Output")
 
     # Initialize the adversarial noise for the optimization procedure
     l_noise.b.set_value(np.random.uniform(-1e-8, 1e-8, size=(3,32,32)).astype(np.float32))
@@ -288,15 +294,21 @@ def adv_test(orig_img = 0, target_img = 1, C = 200.0, plot = True):
     
     # Plotting results
     if plot:
-        show_svhn(x, 3, "Adversarial noise")
-        show_svhn(test_x[target_img], 4, "Target image")
-        show_svhn((test_x[orig_img].flatten()+x), 5, "Adversarial image")
-        show_svhn(adv_img, 6, "Adversarial reconstruction")
-    
+        ax = show_svhn(fig, (test_x[orig_img].flatten()+x), 3)
+        ax.set_ylabel("Adversarial")
+        show_svhn(fig, adv_img, 4)
+        show_svhn(fig, x, 5, "Adversarial noise")
+        show_svhn(fig, test_x[target_img], 6, "Target image")
+        plt.savefig(results_out+"/adv_"+str(orig_img)+"_"+str(target_img)+".pdf", bbox_inches='tight')
         plt.show()
             
     return np.linalg.norm(x), np.linalg.norm(adv_img.reshape(3,32,32) - test_x[target_img])
     
+od, ad = adv_test(0,1, C=200, plot = True)
+od, ad = adv_test(2,3, C=200, plot = True)
+od, ad = adv_test(4,5, C=200, plot = True)
+
+"""
 orig_dist=[]
 adv_dist=[]
 
@@ -313,4 +325,4 @@ plt.ylabel("L2 norm")
 plt.xlabel("Log regularization weight")
 plt.legend()
 plt.plot()
-
+"""
