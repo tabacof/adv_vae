@@ -21,6 +21,9 @@ import matplotlib
 matplotlib.use('Agg')
 import pylab as plt
 from read_write_model import read_model, write_model
+import os
+import urllib
+import Image
 
 filename_script = os.path.basename(os.path.realpath(__file__))
 
@@ -51,8 +54,17 @@ sym_lr = T.scalar('lr')
 ### LOAD DATA
 print "Using SVHN dataset"
 
-svhn_train = loadmat('train_32x32.mat')
-svhn_test = loadmat('test_32x32.mat')
+train_file = 'train_32x32.mat'
+test_file = 'test_32x32.mat'
+
+if not os.path.isfile(train_file):
+    urllib.urlretrieve('http://ufldl.stanford.edu/housenumbers/train_32x32.mat', train_file)
+	
+if not os.path.isfile(test_file):
+    urllib.urlretrieve('http://ufldl.stanford.edu/housenumbers/test_32x32.mat', test_file)
+
+svhn_train = loadmat(train_file)
+svhn_test = loadmat(test_file)
 
 train_x = np.rollaxis(svhn_train['X'], 3).transpose(0,3,1,2).astype(theano.config.floatX)
 test_x = np.rollaxis(svhn_test['X'], 3).transpose(0,3,1,2).astype(theano.config.floatX)
@@ -243,12 +255,15 @@ adv_function = theano.function([sym_x, adv_mean, adv_log_var, C], [adv_loss, adv
 # Helper to plot reconstructions    
 adv_plot = theano.function([sym_x], reconstruction)
 
-def show_svhn(fig, img, i, title=""): # expects flattened image of shape (3072,) 
+def show_svhn(fig, img, i, title="", save_filename=""): # expects flattened image of shape (3072,) 
     img = img.copy().reshape(3,32,32).transpose(1,2,0)
     img *= svhn_std
     img += svhn_mean
     img /= 255.0
     img = np.clip(img, 0, 1)
+    if save_filename:
+        Image.fromarray(np.uint8(img*255), "RGB").save(save_filename, "PNG")
+		
     ax = fig.add_subplot(3, 2, i)
     ax.imshow(img)
     ax.set_title(title)
@@ -294,19 +309,31 @@ def adv_test(orig_img = 0, target_img = 1, C = 100.0, plot = True):
     
     # Plotting results
     if plot:
-        ax = show_svhn(fig, (test_x[orig_img].flatten()+x), 3)
+        ax = show_svhn(fig, (test_x[orig_img].flatten()+x), 3, save_filename=results_out+"/adv_"+str(orig_img)+"_"+str(target_img)+".png")
         ax.set_ylabel("Adversarial")
         show_svhn(fig, adv_img, 4)
         show_svhn(fig, x, 5, "Adversarial noise")
         show_svhn(fig, test_x[target_img], 6, "Target image")
         plt.savefig(results_out+"/adv_"+str(orig_img)+"_"+str(target_img)+".pdf", bbox_inches='tight')
         plt.show()
+		
+	plt.close('all')
             
     return np.linalg.norm(x), np.linalg.norm(adv_img.reshape(3,32,32) - test_x[target_img])
     
-od, ad = adv_test(0,1, C=200, plot = True)
-od, ad = adv_test(2,3, C=200, plot = True)
-od, ad = adv_test(4,5, C=200, plot = True)
+#od, ad = adv_test(0,1, C=200, plot = True)
+#od, ad = adv_test(2,3, C=200, plot = True)
+#od, ad = adv_test(4,5, C=200, plot = True)
+
+n = 100
+
+for i in range(n):
+    orig_img = np.random.randint(0, len(test_x))
+    target_img = np.random.randint(0, len(test_x))
+    od, ad = adv_test(orig_img,target_img, C=200, plot = True)
+	
+	
+	
 
 """
 orig_dist=[]
@@ -326,3 +353,4 @@ plt.xlabel("Log regularization weight")
 plt.legend()
 plt.plot()
 """
+
